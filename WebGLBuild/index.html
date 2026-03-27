@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Unity WebGL Player | Wau movement test</title>
+    <link rel="shortcut icon" href="TemplateData/favicon.ico">
+    <link rel="stylesheet" href="TemplateData/style.css">
+  </head>
+  <body>
+    <div id="unity-container" class="unity-desktop">
+      <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo"></div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+      </div>
+      <div id="unity-warning"> </div>
+      <div id="unity-footer">
+        <div id="unity-webgl-logo"></div>
+        <div id="unity-fullscreen-button"></div>
+        <div id="unity-build-title">Wau movement test</div>
+      </div>
+    </div>
+
+    <script>
+
+      var container = document.querySelector("#unity-container");
+      var canvas = document.querySelector("#unity-canvas");
+      var loadingBar = document.querySelector("#unity-loading-bar");
+      var progressBarFull = document.querySelector("#unity-progress-bar-full");
+      var fullscreenButton = document.querySelector("#unity-fullscreen-button");
+      var warningBanner = document.querySelector("#unity-warning");
+
+      function unityShowBanner(msg, type) {
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+        }
+        var div = document.createElement('div');
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type == 'error') div.style = 'background: red; padding: 10px;';
+        else {
+          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+          setTimeout(function() {
+            warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/WebGLBuild.loader.js";
+      var config = {
+        dataUrl: buildUrl + "/WebGLBuild.data",
+        frameworkUrl: buildUrl + "/WebGLBuild.framework.js",
+        codeUrl: buildUrl + "/WebGLBuild.wasm",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "DefaultCompany",
+        productName: "Wau movement test",
+        productVersion: "1.0",
+        showBanner: unityShowBanner,
+      };
+
+      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+        var meta = document.createElement('meta');
+        meta.name = 'viewport';
+        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
+        document.getElementsByTagName('head')[0].appendChild(meta);
+        container.className = "unity-mobile";
+        canvas.className = "unity-mobile";
+      } else {
+        canvas.style.width = "960px";
+        canvas.style.height = "600px";
+      }
+
+      loadingBar.style.display = "block";
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onload = () => {
+        createUnityInstance(canvas, config, (progress) => {
+          progressBarFull.style.width = 100 * progress + "%";
+        }).then((unityInstance) => {
+          loadingBar.style.display = "none";
+          fullscreenButton.onclick = () => {
+            unityInstance.SetFullscreen(1);
+          };
+        }).catch((message) => {
+          alert(message);
+        });
+      };
+
+      document.body.appendChild(script);
+
+      // =====================
+      // GYRO via plain JS
+      // =====================
+
+      // UPDATE THIS with your tunnel URL each time
+      var SERVER_URL = "wss://wau-server-production.up.railway.app/";
+      var GYRO_SESSION_KEY    = "gyroSessionToken";
+      var SENDER_SESSION_KEY  = "senderSessionToken";
+      var SERVER_INSTANCE_KEY = "lastServerInstance";
+      var GYRO_STARTED_KEY    = "gyroStarted";
+
+      var gyroSocket          = null;
+      var deviceListenerAdded = false;
+      var senderUserId        = null;
+
+      var GYRO_INTERVAL_MS = 100;
+      var lastGyroSendTime = 0;
+
+      function onDeviceOrientation(event) {
+        if (!gyroSocket || gyroSocket.readyState !== WebSocket.OPEN) return;
+        var now = Date.now();
+        if (now - lastGyroSendTime < GYRO_INTERVAL_MS) return;
+        lastGyroSendTime = now;
+        gyroSocket.send("GYRO_ORIENT:" +
+          (event.beta  || 0).toFixed(2) + "," +
+          (event.gamma || 0).toFixed(2) + "," +
+          (event.alpha || 0).toFixed(2));
+        // var normalizedBeta = 90 - (event.beta || 0);
+        // gyroSocket.send("GYRO_ORIENT:" +
+        //   normalizedBeta.toFixed(2) + "," +
+        //   (event.gamma || 0).toFixed(2) + "," +
+        //   (event.alpha || 0).toFixed(2));
+      }
+
+      window.SetSenderUserId = function(id) {
+        senderUserId = parseInt(id);
+        console.log("Sender userId stored:", senderUserId);
+      };
+
+      // Called by Unity when user presses the Gyro Button
+      window.StartGyroFromUnity = function() {
+        console.log("StartGyroFromUnity called");
+        sessionStorage.setItem(GYRO_STARTED_KEY, "1"); // Mark gyro as started
+
+        if (typeof DeviceOrientationEvent !== "undefined" &&
+            typeof DeviceOrientationEvent.requestPermission === "function") {
+          DeviceOrientationEvent.requestPermission()
+            .then(function(response) {
+              if (response === "granted") {
+                console.log("iOS gyro permission granted");
+                connectGyroSocket();
+              } else {
+                console.warn("iOS gyro permission denied");
+              }
+            })
+            .catch(function(err) {
+              console.error("iOS permission error:", err);
+            });
+        } else {
+          connectGyroSocket();
+        }
+      };
+
+      // Called by Unity Restart Button — wipe everything
+      window.RestartGameFromUnity = function() {
+        sessionStorage.removeItem(GYRO_SESSION_KEY);
+        sessionStorage.removeItem(SENDER_SESSION_KEY);
+        sessionStorage.removeItem(SERVER_INSTANCE_KEY);
+        sessionStorage.removeItem(GYRO_STARTED_KEY);
+        if (gyroSocket) {
+          gyroSocket.onclose = null;
+          gyroSocket.close();
+          gyroSocket = null;
+        }
+        window.location.reload();
+      };
+
+      function connectGyroSocket() {
+        if (gyroSocket && gyroSocket.readyState === WebSocket.OPEN) {
+          attachGyroListener();
+          return;
+        }
+        if (gyroSocket && gyroSocket.readyState === WebSocket.CONNECTING) return;
+
+        gyroSocket = new WebSocket(SERVER_URL);
+
+        gyroSocket.onopen = function() {
+          console.log("Gyro socket connected — waiting for SERVER_INSTANCE");
+        };
+
+        gyroSocket.onmessage = function(event) {
+          var msg = event.data;
+
+          if (msg.startsWith("SERVER_INSTANCE:")) {
+            var incoming = msg.split(":")[1];
+            var saved = sessionStorage.getItem(SERVER_INSTANCE_KEY);
+            if (saved !== incoming) {
+              // Server restarted — wipe all gyro/sender session state
+              console.log("Server restarted — clearing gyro sessions");
+              sessionStorage.setItem(SERVER_INSTANCE_KEY, incoming);
+              sessionStorage.removeItem(GYRO_SESSION_KEY);
+              sessionStorage.removeItem(SENDER_SESSION_KEY);
+              sessionStorage.removeItem(GYRO_STARTED_KEY);
+            }
+            // Now decide session or new
+            var savedToken = sessionStorage.getItem(GYRO_SESSION_KEY);
+            if (savedToken) {
+              gyroSocket.send("SESSION:" + savedToken);
+            } else {
+              if (senderUserId !== null) {
+                gyroSocket.send("NEW_SESSION:gyro:" + senderUserId);
+              } else {
+                console.warn("senderUserId not set — gyro cannot link correctly");
+              }
+            }
+
+          } else if (msg.startsWith("SESSION_TOKEN:")) {
+            sessionStorage.setItem(GYRO_SESSION_KEY, msg.split(":")[1]);
+            attachGyroListener();
+
+          } else if (msg.startsWith("SESSION_OK:")) {
+            console.log("Gyro session restored, User:", msg.split(":")[1]);
+            // Only reconnect gyro if user had already started it before refresh
+            if (sessionStorage.getItem(GYRO_STARTED_KEY) === "1") {
+              attachGyroListener();
+            } else {
+              console.log("Gyro not started yet — skipping listener attach");
+            }
+
+          } else if (msg === "SESSION_EXPIRED") {
+            sessionStorage.removeItem(GYRO_SESSION_KEY);
+            setTimeout(function() {
+              if (gyroSocket && gyroSocket.readyState === WebSocket.OPEN && senderUserId !== null)
+                gyroSocket.send("NEW_SESSION:gyro:" + senderUserId);
+            }, 500);
+
+          } else if (msg.startsWith("ERROR:")) {
+            console.error("Gyro server error:", msg);
+          }
+        };
+
+        gyroSocket.onerror = function(e) {
+          console.error("Gyro socket error", e);
+          gyroSocket = null;
+        };
+
+        gyroSocket.onclose = function() {
+          console.log("Gyro socket closed");
+          gyroSocket = null;
+        };
+      }
+
+      function attachGyroListener() {
+        if (deviceListenerAdded) return;
+        deviceListenerAdded = true;
+        window.addEventListener("deviceorientation", onDeviceOrientation);
+        console.log("Gyro listener attached");
+      }
+
+    </script>
+  </body>
+</html>
