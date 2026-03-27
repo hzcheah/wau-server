@@ -270,4 +270,5 @@ function sendToUser(userId, message) {
     });
 }
 
-server.listen(7070, () => console.log(`Server running on http://localhost:7070 [instance: ${SERVER_START_TIME}]`));
+const PORT = process.env.PORT || 7070;
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
