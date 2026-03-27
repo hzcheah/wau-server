@@ -271,5 +271,5 @@ function sendToUser(userId, message) {
     });
 }
 
-const PORT = process.env.PORT || 7070;
+const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
