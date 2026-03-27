@@ -6,6 +6,7 @@ const crypto    = require('crypto');
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'WebGLBuild')));
+app.use('/', express.static(__dirname)); // Host files in the root folder too
 
 const server = http.createServer(app);
 const wss    = new WebSocket.Server({ server });
